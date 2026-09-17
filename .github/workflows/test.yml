@@ -10,11 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v7
       - name: Restore Geodat Cache
         uses: actions/cache/restore@v6
         with:
           path: resources
           key: xray-geodat-
+          enableCrossOsArchive: true
       - name: Check Assets Existence
         id: check-assets
         run: |
@@ -31,9 +34,21 @@ jobs:
               break
             fi
           done
-      - name: Sleep for 90 seconds if Assets Missing
+      - name: Fetch test assets if cache is missing
         if: steps.check-assets.outputs.missing == 'true'
-        run: sleep 90
+        run: |
+          set -euo pipefail
+          mkdir -p resources
+          for file in geoip.dat geosite.dat; do
+            curl -fL --retry 3 "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/$file" -o "resources/$file"
+          done
+      - name: Save test assets
+        if: steps.check-assets.outputs.missing == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: resources
+          key: xray-geodat-${{ github.sha }}
+          enableCrossOsArchive: true
 
   check-proto:
     runs-on: ubuntu-latest
@@ -63,12 +78,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version: '1.26.5'
+          check-latest: false
           cache: false
       - name: Check Format
         run: |
-          go install -v mvdan.cc/gofumpt@latest
+          go install -v mvdan.cc/gofumpt@v0.9.2
           go run ./infra/vformat/main.go -mode check -pwd ./
 
   test:
@@ -87,8 +102,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version: '1.26.5'
+          check-latest: false
       - name: Restore Geodat Cache
         uses: actions/cache/restore@v6
         with:
