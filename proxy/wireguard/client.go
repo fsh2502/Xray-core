@@ -138,7 +138,6 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	}
 	ob.Name = "wireguard"
 	ob.CanSpliceCopy = 3
-	dialer.SetOutboundGateway(ctx, ob)
 
 	if err := h.init(ctx); err != nil {
 		return err

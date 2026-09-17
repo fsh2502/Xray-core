@@ -30,6 +30,8 @@ var (
 		"vmess":         func() interface{} { return new(VMessInboundConfig) },
 		"trojan":        func() interface{} { return new(TrojanServerConfig) },
 		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
+		"tuic":          func() interface{} { return new(TuicServerConfig) },
+		"anytls":        func() interface{} { return new(AnyTLSServerConfig) },
 		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
 		"tun":           func() interface{} { return new(TunConfig) },
 	}, "protocol", "settings")
@@ -49,6 +51,8 @@ var (
 		"hysteria":    func() interface{} { return new(HysteriaClientConfig) },
 		"dns":         func() interface{} { return new(DNSOutboundConfig) },
 		"wireguard":   func() interface{} { return &WireGuardConfig{IsClient: true} },
+		"tuic":        func() interface{} { return new(TuicClientConfig) },
+		"anytls":      func() interface{} { return new(AnyTLSClientConfig) },
 	}, "protocol", "settings")
 )
 

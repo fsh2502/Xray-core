@@ -91,6 +91,7 @@ func (a *Account) getCipher() (Cipher, error) {
 }
 
 // AsAccount implements protocol.AsAccount.
+// 性能优化：使用分片BloomRing替代单一BloomRing，减少锁争用
 func (a *Account) AsAccount() (protocol.Account, error) {
 	Cipher, err := a.getCipher()
 	if err != nil {

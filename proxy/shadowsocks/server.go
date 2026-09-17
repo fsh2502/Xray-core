@@ -145,11 +145,15 @@ func (s *Server) handleUDPPayload(ctx context.Context, conn stat.Connection, dis
 			var err error
 
 			if inbound.User != nil {
-				validator := new(Validator)
-				validator.Add(inbound.User)
-				request, data, err = DecodeUDPPacket(validator, payload)
+				// 已知会话用户，直接基于该用户解码，避免修改全局 validator
+				request, data, err = DecodeUDPPacketWithUser(inbound.User, payload)
 			} else {
-				request, data, err = DecodeUDPPacket(s.validator, payload)
+				// 优化：传递源地址作为缓存键
+				cacheKey := ""
+				if inbound.Source.IsValid() {
+					cacheKey = inbound.Source.String()
+				}
+				request, data, err = DecodeUDPPacketWithCache(s.validator, payload, cacheKey)
 				if err == nil {
 					inbound.User = request.User
 				}
@@ -204,7 +208,10 @@ func (s *Server) handleConnection(ctx context.Context, conn stat.Connection, dis
 	}
 
 	bufferedReader := buf.BufferedReader{Reader: buf.NewReader(conn)}
-	request, bodyReader, err := ReadTCPSession(s.validator, &bufferedReader)
+
+	// 优化：传递源地址作为缓存键，提升热点用户查找性能
+	cacheKey := conn.RemoteAddr().String()
+	request, bodyReader, err := ReadTCPSessionWithCache(s.validator, &bufferedReader, cacheKey)
 	if err != nil {
 		log.Record(&log.AccessMessage{
 			From:   conn.RemoteAddr(),

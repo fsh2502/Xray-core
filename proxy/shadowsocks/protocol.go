@@ -55,6 +55,12 @@ func (r *FullReader) Read(p []byte) (n int, err error) {
 
 // ReadTCPSession reads a Shadowsocks TCP session from the given reader, returns its header and remaining parts.
 func ReadTCPSession(validator *Validator, reader io.Reader) (*protocol.RequestHeader, buf.Reader, error) {
+	return ReadTCPSessionWithCache(validator, reader, "")
+}
+
+// ReadTCPSessionWithCache 带缓存支持的TCP会话读取
+// cacheKey: 缓存键（建议使用源地址），为空则跳过缓存
+func ReadTCPSessionWithCache(validator *Validator, reader io.Reader, cacheKey string) (*protocol.RequestHeader, buf.Reader, error) {
 	behaviorSeed := validator.GetBehaviorSeed()
 	drainer, errDrain := drain.NewBehaviorSeedLimitedDrainer(int64(behaviorSeed), 16+38, 3266, 64)
 
@@ -72,7 +78,7 @@ func ReadTCPSession(validator *Validator, reader io.Reader) (*protocol.RequestHe
 	}
 
 	bs := buffer.Bytes()
-	user, aead, _, ivLen, err := validator.Get(bs, protocol.RequestCommandTCP)
+	user, aead, _, ivLen, err := validator.GetWithCache(bs, protocol.RequestCommandTCP, cacheKey)
 
 	switch err {
 	case ErrNotFound:
@@ -228,8 +234,54 @@ func EncodeUDPPacket(request *protocol.RequestHeader, payload []byte) (*buf.Buff
 }
 
 func DecodeUDPPacket(validator *Validator, payload *buf.Buffer) (*protocol.RequestHeader, *buf.Buffer, error) {
+	return DecodeUDPPacketWithCache(validator, payload, "")
+}
+
+// DecodeUDPPacketWithUser 基于已知用户解码 UDP 包（不修改 Validator）
+func DecodeUDPPacketWithUser(user *protocol.MemoryUser, payload *buf.Buffer) (*protocol.RequestHeader, *buf.Buffer, error) {
+	account, ok := user.Account.(*MemoryAccount)
+	if !ok {
+		return nil, nil, errors.New("expected MemoryAccount returned from validator")
+	}
+
+	// 直接使用账户的 Cipher 在原有缓冲区上解密（与 DecodeUDPPacket 行为一致）
+	if account.Cipher.IsAEAD() {
+		if err := account.Cipher.DecodePacket(account.Key, payload); err != nil {
+			return nil, nil, errors.New("failed to decrypt UDP payload").Base(err)
+		}
+	} else {
+		if account.Cipher.IVSize() > 0 {
+			iv := make([]byte, account.Cipher.IVSize())
+			copy(iv, payload.BytesTo(account.Cipher.IVSize()))
+			_ = iv
+		}
+		if err := account.Cipher.DecodePacket(account.Key, payload); err != nil {
+			return nil, nil, errors.New("failed to decrypt UDP payload").Base(err)
+		}
+	}
+
+	payload.SetByte(0, payload.Byte(0)&0x0F)
+
+	addr, port, err := addrParser.ReadAddressPort(nil, payload)
+	if err != nil {
+		return nil, nil, errors.New("failed to parse address").Base(err)
+	}
+
+	request := &protocol.RequestHeader{
+		Version: Version,
+		User:    user,
+		Command: protocol.RequestCommandUDP,
+		Address: addr,
+		Port:    port,
+	}
+
+	return request, payload, nil
+}
+
+// DecodeUDPPacketWithCache 带缓存支持的UDP包解码
+func DecodeUDPPacketWithCache(validator *Validator, payload *buf.Buffer, cacheKey string) (*protocol.RequestHeader, *buf.Buffer, error) {
 	rawPayload := payload.Bytes()
-	user, _, d, _, err := validator.Get(rawPayload, protocol.RequestCommandUDP)
+	user, _, d, _, err := validator.GetWithCache(rawPayload, protocol.RequestCommandUDP, cacheKey)
 
 	if goerrors.Is(err, ErrIVNotUnique) {
 		return nil, nil, errors.New("failed iv check").Base(err)
@@ -291,10 +343,7 @@ func (v *UDPReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 		buffer.Release()
 		return nil, err
 	}
-	validator := new(Validator)
-	validator.Add(v.User)
-
-	u, payload, err := DecodeUDPPacket(validator, buffer)
+	u, payload, err := DecodeUDPPacketWithUser(v.User, buffer)
 	if err != nil {
 		buffer.Release()
 		return nil, err
